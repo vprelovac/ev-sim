@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV Energy Consumption and Range Chart</title>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.1.9/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Add any additional styles here */
+        body {
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+
+        // Placeholder components for UI elements
+        const Slider = ({ value, onValueChange, min, max, step }) => (
+            <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={value}
+                onChange={(e) => onValueChange([parseFloat(e.target.value)])}
+                className="w-full"
+            />
+        );
+
+        const Checkbox = ({ checked, onCheckedChange, id }) => (
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onCheckedChange(e.target.checked)}
+                id={id}
+                className="mr-2"
+            />
+        );
+
+        const Input = ({ value, onChange, className }) => (
+            <input
+                type="number"
+                value={value}
+                onChange={onChange}
+                className={`border rounded px-2 py-1 ${className}`}
+            />
+        );
+
+        const EVEnergyConsumptionChart = () => {
+            const [cx, setCx] = useState(0.24);
+            const [frontalArea, setFrontalArea] = useState(2.96);
+            const [crr, setCrr] = useState(0.015);
+            const [baseMass, setBaseMass] = useState(1800);
+            const [efficiency, setEfficiency] = useState(94);
+            const [batteryCapacity, setBatteryCapacity] = useState(100);
+            const [batteryWeightRatio, setBatteryWeightRatio] = useState(7);
+            const [autoAdjustMass, setAutoAdjustMass] = useState(true);
+            const [totalMass, setTotalMass] = useState(1800);
+
+            useEffect(() => {
+                if (autoAdjustMass) {
+                    const batteryMass = batteryCapacity * batteryWeightRatio;
+                    setTotalMass(baseMass + batteryMass);
+                } else {
+                    setTotalMass(baseMass);
+                }
+            }, [autoAdjustMass, baseMass, batteryCapacity, batteryWeightRatio]);
+
+            const calculateEnergy = (speed, mass, capacity) => {
+                const airDensity = 1.225; // kg/m³
+                const gravityAcceleration = 9.81; // m/s²
+                const speedMps = speed * 0.44704; // Convert mph to m/s
+
+                const airDragForce = 0.5 * cx * frontalArea * airDensity * Math.pow(speedMps, 2);
+                const rollingResistanceForce = crr * mass * gravityAcceleration;
+
+                const totalForce = airDragForce + rollingResistanceForce;
+                const powerRequired = totalForce * speedMps;
+                const powerRequiredWithEfficiency = powerRequired / (efficiency / 100);
+
+                const energyConsumption = powerRequiredWithEfficiency / speed; // In Wh/mile
+
+                const range = (capacity * 1000) / energyConsumption; // Convert kWh to Wh and calculate range in miles
+
+                return {
+                    speed,
+                    total: energyConsumption,
+                    airDrag: (airDragForce * speedMps / (efficiency / 100)) / speed,
+                    rollingResistance: (rollingResistanceForce * speedMps / (efficiency / 100)) / speed,
+                    range: range
+                };
+            };
+
+            const data = useMemo(() => Array.from({ length: 100 }, (_, i) => calculateEnergy(i + 1, totalMass, batteryCapacity)), [cx, frontalArea, crr, totalMass, efficiency, batteryCapacity]);
+            
+            const rangeData = useMemo(() => {
+                const capacities = Array.from({ length: 49 }, (_, i) => (i + 1) * 10);
+                return capacities.map(capacity => {
+                    const mass = autoAdjustMass ? baseMass + capacity * batteryWeightRatio : totalMass;
+                    return {
+                        capacity,
+                        range35: calculateEnergy(35, mass, capacity).range,
+                        range55: calculateEnergy(55, mass, capacity).range,
+                        range75: calculateEnergy(75, mass, capacity).range,
+                    };
+                });
+            }, [cx, frontalArea, crr, baseMass, totalMass, efficiency, batteryWeightRatio, autoAdjustMass]);
+
+            const keySpeedsData = useMemo(() => {
+                return [
+                    { ...calculateEnergy(35, totalMass, batteryCapacity), label: "City" },
+                    { ...calculateEnergy(55, totalMass, batteryCapacity), label: "EPA" },
+                    { ...calculateEnergy(75, totalMass, batteryCapacity), label: "Highway" }
+                ];
+            }, [cx, frontalArea, crr, totalMass, efficiency, batteryCapacity]);
+
+            const renderSlider = (label, value, setValue, min, max, step, unit) => (
+                <div className="mb-4">
+                    <label className="block mb-2">{label}: {value.toFixed(label === "Rolling Resistance Coefficient" ? 3 : 2)} {unit}</label>
+                    <Slider value={[value]} onValueChange={(newValue) => setValue(newValue[0])} min={min} max={max} step={step} />
+                </div>
+            );
+
+            const CustomTooltip = ({ active, payload, label }) => {
+                if (active && payload && payload.length) {
+                    const speed = label;
+                    const consumption = payload[0].value.toFixed(0);
+                    const range = payload[3].value.toFixed(0);
+                    return (
+                        <div className="bg-white border p-2">
+                            <p>Speed: {speed} mph</p>
+                            <p>Consumption: {consumption} Wh/mile</p>
+                            <p>Range: {range} miles</p>
+                        </div>
+                    );
+                }
+                return null;
+            };
+
+            const RangeTooltip = ({ active, payload, label }) => {
+                if (active && payload && payload.length) {
+                    return (
+                        <div className="bg-white border p-2">
+                            <p>Battery Capacity: {label} kWh</p>
+                            {payload.map((entry, index) => (
+                                <p key={index}>{entry.name}: {entry.value.toFixed(0)} miles</p>
+                            ))}
+                        </div>
+                    );
+                }
+                return null;
+            };
+
+            return (
+                <div className="p-4 max-w-4xl mx-auto">
+                    <h2 className="text-2xl font-bold mb-4">EV Energy Consumption and Range Chart</h2>
+                    {renderSlider("Drag Coefficient (Cx)", cx, setCx, 0.1, 0.5, 0.01, "")}
+                    {renderSlider("Frontal Area", frontalArea, setFrontalArea, 1, 5, 0.1, "m²")}
+                    {renderSlider("Rolling Resistance Coefficient", crr, setCrr, 0.001, 0.02, 0.001, "")}
+                    {renderSlider("Base Mass", baseMass, setBaseMass, 1000, 4000, 50, "kg")}
+                    {renderSlider("Drivetrain Efficiency", efficiency, setEfficiency, 80, 100, 1, "%")}
+                    {renderSlider("Battery Capacity", batteryCapacity, setBatteryCapacity, 10, 500, 1, "kWh")}
+                    <div className="mb-4 flex items-center">
+                        <label className="mr-2">Battery Weight Ratio:</label>
+                        <Input
+                            value={batteryWeightRatio}
+                            onChange={(e) => setBatteryWeightRatio(Number(e.target.value))}
+                            className="w-20 mr-2"
+                        />
+                        <span className="mr-4">kg/kWh</span>
+                        <Checkbox
+                            checked={autoAdjustMass}
+                            onCheckedChange={setAutoAdjustMass}
+                            id="autoAdjustMass"
+                        />
+                        <label htmlFor="autoAdjustMass" className="ml-2">
+                            Auto-adjust mass
+                        </label>
+                        <span className="ml-4">Total Mass: {totalMass.toFixed(0)} kg</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={400}>
+                        <LineChart data={data}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="speed" label={{ value: 'Speed (mph)', position: 'insideBottom', offset: -5 }} />
+                            <YAxis yAxisId="left" label={{ value: 'Energy Consumption (Wh/mile)', angle: -90, position: 'insideLeft', offset: -5 }} />
+                            <YAxis yAxisId="right" orientation="right" label={{ value: 'Range (miles)', angle: 90, position: 'insideRight', offset: 5 }} />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Legend />
+                            <Line yAxisId="left" type="monotone" dataKey="total" stroke="#ff7300" name="Total Energy Consumption" />
+                            <Line yAxisId="left" type="monotone" dataKey="airDrag" stroke="#8884d8" name="Air Drag" />
+                            <Line yAxisId="left" type="monotone" dataKey="rollingResistance" stroke="#82ca9d" name="Rolling Resistance" />
+                            <Line yAxisId="right" type="monotone" dataKey="range" stroke="#ff0000" name="Range" />
+                        </LineChart>
+                    </ResponsiveContainer>
+                    <div className="mt-4 mb-8">
+                        <table className="w-full border-collapse border border-gray-300">
+                            <thead>
+                                <tr>
+                                    <th className="border border-gray-300 p-2">Speed (mph)</th>
+                                    <th className="border border-gray-300 p-2">Type</th>
+                                    <th className="border border-gray-300 p-2">Energy Consumption (Wh/mile)</th>
+                                    <th className="border border-gray-300 p-2">Range (miles)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {keySpeedsData.map((data, index) => (
+                                    <tr key={index}>
+                                        <td className="border border-gray-300 p-2">{data.speed}</td>
+                                        <td className="border border-gray-300 p-2">{data.label}</td>
+                                        <td className="border border-gray-300 p-2">{data.total.toFixed(2)}</td>
+                                        <td className="border border-gray-300 p-2">{data.range.toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <h2 className="text-2xl font-bold mb-4">Range vs Battery Capacity</h2>
+                    <ResponsiveContainer width="100%" height={400}>
+                        <LineChart data={rangeData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="capacity" label={{ value: 'Battery Capacity (kWh)', position: 'insideBottom', offset: -5 }} />
+                            <YAxis label={{ value: 'Range (miles)', angle: -90, position: 'insideLeft', offset: -5 }} />
+                            <Tooltip content={<RangeTooltip />} />
+                            <Legend />
+                            <Line type="monotone" dataKey="range35" stroke="#8884d8" name="Range at 35 mph (City)" />
+                            <Line type="monotone" dataKey="range55" stroke="#82ca9d" name="Range at 55 mph (EPA)" />
+                            <Line type="monotone" dataKey="range75" stroke="#ffc658" name="Range at 75 mph (Highway)" />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<EVEnergyConsumptionChart />, document.getElementById('root'));
+    </script>
+</body>
+</html>
